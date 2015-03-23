@@ -1,4 +1,4 @@
 ﻿AvalonEdit
 ==========
 
-AvalonEdit is the name of the new WPF-based text editor in SharpDevelop 4.x "Mirador".
+Form of original editor that provides better editor API (separates interfaces from text editor) and some performance improvements
