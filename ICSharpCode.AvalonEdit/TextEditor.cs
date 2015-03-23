@@ -834,7 +834,7 @@ namespace ICSharpCode.AvalonEdit
 					int length = this.SelectionLength;
 					textArea.Document.Replace(offset, length, value);
 					// keep inserted text selected
-					textArea.Selection = Selection.Create(textArea, offset, offset + value.Length);
+					textArea.Selection = SimpleSelection.Create(textArea, offset, offset + value.Length);
 				}
 			}
 		}
