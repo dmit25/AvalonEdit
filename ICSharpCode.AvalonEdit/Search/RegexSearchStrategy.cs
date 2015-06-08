@@ -18,68 +18,101 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
-using System.Windows.Documents;
 using ICSharpCode.AvalonEdit.Document;
-using ICSharpCode.NRefactory.Editor;
 
 namespace ICSharpCode.AvalonEdit.Search
 {
-	class RegexSearchStrategy : ISearchStrategy
-	{
-		readonly Regex searchPattern;
-		readonly bool matchWholeWords;
-		
-		public RegexSearchStrategy(Regex searchPattern, bool matchWholeWords)
-		{
-			if (searchPattern == null)
-				throw new ArgumentNullException("searchPattern");
-			this.searchPattern = searchPattern;
-			this.matchWholeWords = matchWholeWords;
-		}
-		
-		public IEnumerable<ISearchResult> FindAll(ITextSource document, int offset, int length)
-		{
-			int endOffset = offset + length;
-			foreach (Match result in searchPattern.Matches(document.Text)) {
-				int resultEndOffset = result.Length + result.Index;
-				if (offset > result.Index || endOffset < resultEndOffset)
-					continue;
-				if (matchWholeWords && (!IsWordBorder(document, result.Index) || !IsWordBorder(document, resultEndOffset)))
-					continue;
-				yield return new SearchResult { StartOffset = result.Index, Length = result.Length, Data = result };
-			}
-		}
-		
-		static bool IsWordBorder(ITextSource document, int offset)
-		{
-			return TextUtilities.GetNextCaretPosition(document, offset - 1, LogicalDirection.Forward, CaretPositioningMode.WordBorder) == offset;
-		}
-		
-		public ISearchResult FindNext(ITextSource document, int offset, int length)
-		{
-			return FindAll(document, offset, length).FirstOrDefault();
-		}
-		
-		public bool Equals(ISearchStrategy other)
-		{
-			var strategy = other as RegexSearchStrategy;
-			return strategy != null &&
-				strategy.searchPattern.ToString() == searchPattern.ToString() &&
-				strategy.searchPattern.Options == searchPattern.Options &&
-				strategy.searchPattern.RightToLeft == searchPattern.RightToLeft;
-		}
-	}
-	
-	class SearchResult : TextSegment, ISearchResult
-	{
-		public Match Data { get; set; }
-		
-		public string ReplaceWith(string replacement)
-		{
-			return Data.Result(replacement);
-		}
-	}
+    class RegexSearchStrategy : ISearchStrategy
+    {
+        readonly Regex _searchPattern;
+        readonly bool _matchWholeWords;
+
+        public RegexSearchStrategy(string searchPattern, bool matchWholeWords, RegexOptions options)
+        {
+            if (searchPattern == null)
+            {
+                throw new ArgumentNullException("searchPattern");
+            }
+            _searchPattern = new Regex(searchPattern, options);
+            _matchWholeWords = matchWholeWords;
+        }
+
+        public IList<ISearchResult> FindAll(string text, int offset, int length, SearchContext context)
+        {
+            return FindAllMatches(text, offset, length, context, false);
+        }
+
+        //static bool IsWordBorder(ITextSource document, int offset)
+        //{
+        //    return TextUtilities.GetNextCaretPosition(document, offset - 1, LogicalDirection.Forward, CaretPositioningMode.WordBorder) == offset;
+        //}
+
+        public ISearchResult FindNext(string text, int offset, int length, SearchContext context)
+        {
+            var matches = FindAllMatches(text, offset, length, context, true);
+            if (matches == null)
+            {
+                return null;
+            }
+            return matches.Count > 0 ? matches[0] : null;
+        }
+
+        private List<ISearchResult> FindAllMatches(string text, int offset, int length, SearchContext context, bool returnFirst)
+        {
+            var res = new List<ISearchResult>();
+            var endOffset = offset + length;
+            return SearchUsingRegex(offset, returnFirst, text, endOffset, res, context);
+        }
+
+        private List<ISearchResult> SearchUsingRegex(int offset, bool returnFirst, string text, int endOffset, List<ISearchResult> res, SearchContext context)
+        {
+            foreach (Match result in _searchPattern.Matches(text))
+            {
+                if (context.IsCanceled)
+                {
+                    return null;
+                }
+                var resultEndOffset = result.Length + result.Index;
+                if (offset > result.Index || endOffset < resultEndOffset)
+                {
+                    continue;
+                }
+                //if (_matchWholeWords &&
+                //    (!IsWordBorder(document, result.Index) || !IsWordBorder(document, resultEndOffset)))
+                //{
+                //    continue;
+                //}
+                res.Add(new SearchResult { StartOffset = result.Index, Length = result.Length, Data = result });
+                if (returnFirst)
+                {
+                    break;
+                }
+            }
+            return res;
+        }
+
+        public bool Equals(ISearchStrategy other)
+        {
+            var strategy = other as RegexSearchStrategy;
+            return strategy != null &&
+                strategy._searchPattern.ToString() == _searchPattern.ToString() &&
+                strategy._searchPattern.Options == _searchPattern.Options &&
+                strategy._searchPattern.RightToLeft == _searchPattern.RightToLeft;
+        }
+    }
+
+    class SearchResult : TextSegment, ISearchResult
+    {
+        public Match Data { get; set; }
+
+        public string ReplaceWith(string replacement)
+        {
+            if (Data != null)
+            {
+                return Data.Result(replacement);
+            }
+            return string.Empty;
+        }
+    }
 }
