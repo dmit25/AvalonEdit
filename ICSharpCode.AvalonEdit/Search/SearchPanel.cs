@@ -17,22 +17,17 @@
 // DEALINGS IN THE SOFTWARE.
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using ICSharpCode.AvalonEdit.Document;
 using ICSharpCode.AvalonEdit.Editing;
-using ICSharpCode.AvalonEdit.Folding;
 using ICSharpCode.AvalonEdit.Rendering;
 
 namespace ICSharpCode.AvalonEdit.Search
@@ -374,57 +369,7 @@ namespace ICSharpCode.AvalonEdit.Search
                 previousSearch = context;
                 ThreadPool.QueueUserWorkItem(state =>
                 {
-                    var searchResults = strategy.FindAll(document, 0, document.Length, context);
-                    if (searchResults == null)
-                    {
-                        return;
-                    }
-                    // We cast from ISearchResult to SearchResult; this is safe because we always use the built-in strategy
-                    for (int index = 0; index < searchResults.Count; index++)
-                    {
-                        if (context.IsCanceled)
-                        {
-                            return;
-                        }
-                        var result = (SearchResult)searchResults[index];
-                        if (changeSelection && result.StartOffset >= offset)
-                        {
-                            Application.Current.Dispatcher.BeginInvoke(
-                                DispatcherPriority.Background,
-                                new Action(() =>
-                                {
-                                    if (!context.IsCanceled)
-                                    {
-                                        SelectResult(result);
-                                    }
-                                }));
-                            changeSelection = false;
-                        }
-                        if (context.IsCanceled)
-                        {
-                            return;
-                        }
-                        renderer.CurrentResults.Add(result);
-                    }
-                    if (!context.IsCanceled)
-                    {
-                        Application.Current.Dispatcher.BeginInvoke(
-                            DispatcherPriority.Background,
-                            new Action(() =>
-                            {
-                                if (!renderer.CurrentResults.Any())
-                                {
-                                    messageView.IsOpen = true;
-                                    messageView.Content = Localization.NoMatchesFoundText;
-                                    messageView.PlacementTarget = searchTextBox;
-                                }
-                                else
-                                {
-                                    messageView.IsOpen = false;
-                                }
-                                textArea.TextView.InvalidateLayer(KnownLayer.Selection);
-                            }));
-                    }
+                    RunSearch(document, context, changeSelection, offset);
                 });
             }
             else
@@ -433,8 +378,80 @@ namespace ICSharpCode.AvalonEdit.Search
             }
 
         }
+        /// <summary>
+        /// Runs search process
+        /// </summary>
+        /// <param name="document"></param>
+        /// <param name="context"></param>
+        /// <param name="changeSelection"></param>
+        /// <param name="offset"></param>
+        void RunSearch(string document, SearchContext context, bool changeSelection, int offset)
+        {
+            var searchResults = strategy.FindAll(document, 0, document.Length, context);
+            if (searchResults == null)
+            {
+                return;
+            }
+            // We cast from ISearchResult to SearchResult; this is safe because we always use the built-in strategy
+            for (int index = 0; index < searchResults.Count; index++)
+            {
+                if (context.IsCanceled)
+                {
+                    return;
+                }
+                var result = (SearchResult)searchResults[index];
+                if (changeSelection && result.StartOffset >= offset)
+                {
+                    RunOnDispatcher(() =>
+                        {
+                            if (!context.IsCanceled)
+                            {
+                                SelectResult(result);
+                            }
+                        });
+                    changeSelection = false;
+                }
+                if (context.IsCanceled)
+                {
+                    return;
+                }
+                renderer.CurrentResults.Add(result);
+            }
+            if (!context.IsCanceled)
+            {
+                RunOnDispatcher(() =>
+                {
+                    if (!renderer.CurrentResults.Any())
+                    {
+                        messageView.IsOpen = true;
+                        messageView.Content = Localization.NoMatchesFoundText;
+                        messageView.PlacementTarget = searchTextBox;
+                    }
+                    else
+                    {
+                        messageView.IsOpen = false;
+                    }
+                    textArea.TextView.InvalidateLayer(KnownLayer.Selection);
+                });
+            }
+        }
 
-        void SelectResult(SearchResult result)
+        /// <summary>
+        /// Executes <paramref name="act"/> on dispatcher
+        /// </summary>
+        /// <param name="act"></param>
+        void RunOnDispatcher(Action act)
+        {
+            Application.Current.Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                act);
+        }
+
+        /// <summary>
+        /// Select result in editor
+        /// </summary>
+        /// <param name="result"></param>
+        void SelectResult(TextSegment result)
         {
             textArea.Caret.Offset = result.StartOffset;
             textArea.Selection = Selection.Create(textArea, result.StartOffset, result.EndOffset);
