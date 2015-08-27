@@ -18,6 +18,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls.Primitives;
@@ -46,14 +47,41 @@ namespace ICSharpCode.AvalonEdit.Rendering
 		}
 		
 		/// <summary>
-		/// Gets/Sets whether to align the geometry to whole pixels.
+		/// Gets/Sets whether to align to whole pixels.
+		/// 
+		/// If BorderThickness is set to 0, the geometry is aligned to whole pixels.
+		/// If BorderThickness is set to a non-zero value, the outer edge of the border is aligned
+		/// to whole pixels.
+		/// 
+		/// The default value is <c>false</c>.
 		/// </summary>
 		public bool AlignToWholePixels { get; set; }
 		
 		/// <summary>
+		/// Gets/sets the border thickness.
+		/// 
+		/// This property only has an effect if <c>AlignToWholePixels</c> is enabled.
+		/// When using the resulting geometry to paint a border, set this property to the border thickness.
+		/// Otherwise, leave the property set to the default value <c>0</c>.
+		/// </summary>
+		public double BorderThickness { get; set; }
+		
+		bool alignToMiddleOfPixels;
+		
+		/// <summary>
 		/// Gets/Sets whether to align the geometry to the middle of pixels.
 		/// </summary>
-		public bool AlignToMiddleOfPixels { get; set; }
+		[Obsolete("Use the AlignToWholePixels and BorderThickness properties instead. "
+		          + "Setting AlignToWholePixels=true and setting the BorderThickness to the pixel size " 
+		          + "is equivalent to aligning the geometry to the middle of pixels.")]
+		public bool AlignToMiddleOfPixels {
+			get {
+				return alignToMiddleOfPixels;
+			}
+			set {
+				alignToMiddleOfPixels = value;
+			}
+		}
 		
 		/// <summary>
 		/// Gets/Sets whether to extend the rectangles to full width at line end.
@@ -96,17 +124,19 @@ namespace ICSharpCode.AvalonEdit.Rendering
 		void AddRectangle(Size pixelSize, Rect r)
 		{
 			if (AlignToWholePixels) {
-				AddRectangle(PixelSnapHelpers.Round(r.Left, pixelSize.Width),
-				             PixelSnapHelpers.Round(r.Top + 1, pixelSize.Height),
-				             PixelSnapHelpers.Round(r.Right, pixelSize.Width),
-				             PixelSnapHelpers.Round(r.Bottom + 1, pixelSize.Height));
-			} else if (AlignToMiddleOfPixels) {
+				double halfBorder = 0.5 * BorderThickness;
+				AddRectangle(PixelSnapHelpers.Round(r.Left - halfBorder, pixelSize.Width) + halfBorder,
+				             PixelSnapHelpers.Round(r.Top - halfBorder, pixelSize.Height) + halfBorder,
+				             PixelSnapHelpers.Round(r.Right + halfBorder, pixelSize.Width) - halfBorder,
+				             PixelSnapHelpers.Round(r.Bottom + halfBorder, pixelSize.Height) - halfBorder);
+				//Debug.WriteLine(r.ToString() + " -> " + new Rect(lastLeft, lastTop, lastRight-lastLeft, lastBottom-lastTop).ToString());
+			} else if (alignToMiddleOfPixels) {
 				AddRectangle(PixelSnapHelpers.PixelAlign(r.Left, pixelSize.Width),
-				             PixelSnapHelpers.PixelAlign(r.Top + 1, pixelSize.Height),
+				             PixelSnapHelpers.PixelAlign(r.Top, pixelSize.Height),
 				             PixelSnapHelpers.PixelAlign(r.Right, pixelSize.Width),
-				             PixelSnapHelpers.PixelAlign(r.Bottom + 1, pixelSize.Height));
+				             PixelSnapHelpers.PixelAlign(r.Bottom, pixelSize.Height));
 			} else {
-				AddRectangle(r.Left, r.Top + 1, r.Right, r.Bottom + 1);
+				AddRectangle(r.Left, r.Top, r.Right, r.Bottom);
 			}
 		}
 		
@@ -192,7 +222,9 @@ namespace ICSharpCode.AvalonEdit.Rendering
 				double y = visualLine.GetTextLineVisualYPosition(line, VisualYPosition.LineTop);
 				int visualStartCol = visualLine.GetTextLineVisualStartColumn(line);
 				int visualEndCol = visualStartCol + line.Length;
-				if (line != lastTextLine)
+				if (line == lastTextLine)
+					visualEndCol -= 1; // 1 position for the TextEndOfParagraph
+				else
 					visualEndCol -= line.TrailingWhitespaceLength;
 				
 				if (segmentEndVC < visualStartCol)
@@ -202,6 +234,7 @@ namespace ICSharpCode.AvalonEdit.Rendering
 				int segmentStartVCInLine = Math.Max(segmentStartVC, visualStartCol);
 				int segmentEndVCInLine = Math.Min(segmentEndVC, visualEndCol);
 				y -= scrollOffset.Y;
+				Rect lastRect = Rect.Empty;
 				if (segmentStartVCInLine == segmentEndVCInLine) {
 					// GetTextBounds crashes for length=0, so we'll handle this case with GetDistanceFromCharacterHit
 					// We need to return a rectangle to ensure empty lines are still visible
@@ -214,9 +247,8 @@ namespace ICSharpCode.AvalonEdit.Rendering
 						continue;
 					if (segmentStartVCInLine == visualStartCol && i > 0 && segmentStartVC < segmentStartVCInLine && visualLine.TextLines[i - 1].TrailingWhitespaceLength == 0)
 						continue;
-					yield return new Rect(pos, y, 1, line.Height);
+					lastRect = new Rect(pos, y, textView.EmptyLineSelectionWidth, line.Height);
 				} else {
-					Rect lastRect = Rect.Empty;
 					if (segmentStartVCInLine <= visualEndCol) {
 						foreach (TextBounds b in line.GetTextBounds(segmentStartVCInLine, segmentEndVCInLine - segmentStartVCInLine)) {
 							double left = b.Rectangle.Left - scrollOffset.X;
@@ -227,23 +259,45 @@ namespace ICSharpCode.AvalonEdit.Rendering
 							lastRect = new Rect(Math.Min(left, right), y, Math.Abs(right - left), line.Height);
 						}
 					}
-					if (segmentEndVC >= visualLine.VisualLengthWithEndOfLineMarker) {
-						double left = (segmentStartVC > visualLine.VisualLengthWithEndOfLineMarker ? visualLine.GetTextLineVisualXPosition(lastTextLine, segmentStartVC) : line.Width) - scrollOffset.X;
-						double right = ((segmentEndVC == int.MaxValue || line != lastTextLine) ? Math.Max(((IScrollInfo)textView).ExtentWidth, ((IScrollInfo)textView).ViewportWidth) : visualLine.GetTextLineVisualXPosition(lastTextLine, segmentEndVC)) - scrollOffset.X;
-						Rect extendSelection = new Rect(Math.Min(left, right), y, Math.Abs(right - left), line.Height);
-						if (!lastRect.IsEmpty) {
-							if (extendSelection.IntersectsWith(lastRect)) {
-								lastRect.Union(extendSelection);
-								yield return lastRect;
-							} else {
-								yield return lastRect;
-								yield return extendSelection;
-							}
-						} else
-							yield return extendSelection;
-					} else
-						yield return lastRect;
 				}
+				// If the segment ends in virtual space, extend the last rectangle with the rectangle the portion of the selection
+				// after the line end.
+				// Also, when word-wrap is enabled and the segment continues into the next line, extend lastRect up to the end of the line.
+				if (segmentEndVC > visualEndCol) {
+					double left, right;
+					if (segmentStartVC > visualLine.VisualLengthWithEndOfLineMarker) {
+						// segmentStartVC is in virtual space
+						left = visualLine.GetTextLineVisualXPosition(lastTextLine, segmentStartVC);
+					} else {
+						// Otherwise, we already processed the rects from segmentStartVC up to visualEndCol,
+						// so we only need to do the remainder starting at visualEndCol.
+						// For word-wrapped lines, visualEndCol doesn't include the whitespace hidden by the wrap,
+						// so we'll need to include it here.
+						// For the last line, visualEndCol already includes the whitespace.
+						left = (line == lastTextLine ? line.WidthIncludingTrailingWhitespace : line.Width);
+					}
+					if (line != lastTextLine || segmentEndVC == int.MaxValue) {
+						// If word-wrap is enabled and the segment continues into the next line,
+						// or if the extendToFullWidthAtLineEnd option is used (segmentEndVC == int.MaxValue),
+						// we select the full width of the viewport.
+						right = Math.Max(((IScrollInfo)textView).ExtentWidth, ((IScrollInfo)textView).ViewportWidth);
+					} else {
+						right = visualLine.GetTextLineVisualXPosition(lastTextLine, segmentEndVC);
+					}
+					Rect extendSelection = new Rect(Math.Min(left, right), y, Math.Abs(right - left), line.Height);
+					if (!lastRect.IsEmpty) {
+						if (extendSelection.IntersectsWith(lastRect)) {
+							lastRect.Union(extendSelection);
+							yield return lastRect;
+						} else {
+							// If the end of the line is in an RTL segment, keep lastRect and extendSelection separate.
+							yield return lastRect;
+							yield return extendSelection;
+						}
+					} else
+						yield return extendSelection;
+				} else
+					yield return lastRect;
 			}
 		}
 		
